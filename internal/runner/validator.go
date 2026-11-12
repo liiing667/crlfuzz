@@ -2,7 +2,6 @@ package runner
 
 import (
 	"io/ioutil"
-	"net/url"
 	"os"
 
 	"github.com/dwisiswant0/crlfuzz/pkg/errors"
@@ -44,20 +43,6 @@ func isStdin() bool {
 	}
 
 	if f.Mode()&os.ModeNamedPipe == 0 {
-		return false
-	}
-
-	return true
-}
-
-func isURL(s string) bool {
-	_, e := url.ParseRequestURI(s)
-	if e != nil {
-		return false
-	}
-
-	u, e := url.Parse(s)
-	if e != nil || u.Scheme == "" || u.Host == "" {
 		return false
 	}
 

@@ -1,19 +1,46 @@
 package crlfuzz
 
 import (
+	"context"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/dwisiswant0/crlfuzz/pkg/request"
 )
 
-// Scan will scanning for CRLF vulnerability against target
-func Scan(url string, method string, data string, headers []string, proxy string) (bool, error) {
-	client := request.Client(proxy)
-	req, e := http.NewRequest(method, url, strings.NewReader(data))
+// RequestTimeout bounds every fuzz request. Tests may override it.
+var RequestTimeout = 30 * time.Second
+
+// ScanJob scans a planned Job and returns a Result carrying the same stable
+// target identifier and an explicit Status classification, so failures,
+// timeouts and clean (non-vulnerable) responses are no longer ambiguous.
+func ScanJob(job *Job, method string, data string, headers []string, proxy string) *Result {
+	result := &Result{
+		ID:          job.ID,
+		Source:      job.Source,
+		URL:         job.URL,
+		DuplicateOf: job.DuplicateOf,
+	}
+
+	if job.IsDuplicate() {
+		result.Status = StatusDuplicate
+
+		return result
+	}
+
+	client := request.Client(proxy, RequestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), RequestTimeout)
+	defer cancel()
+
+	req, e := http.NewRequestWithContext(ctx, method, job.URL, strings.NewReader(data))
 	if e != nil {
-		return false, errors.New(e.Error())
+		result.Status = StatusError
+		result.Err = errors.New(e.Error())
+
+		return result
 	}
 	for _, header := range headers {
 		parts := strings.SplitN(header, ":", 2)
@@ -27,11 +54,34 @@ func Scan(url string, method string, data string, headers []string, proxy string
 
 	res, e := client.Do(req)
 	if e != nil {
-		return false, errors.New(e.Error())
+		result.Err = errors.New(e.Error())
+		if isTimeoutError(e) {
+			result.Status = StatusTimeout
+		} else {
+			result.Status = StatusError
+		}
+
+		return result
 	}
 	defer res.Body.Close()
 
-	return isVuln(res), nil
+	if isVuln(res) {
+		result.Status = StatusVulnerable
+	} else {
+		result.Status = StatusOK
+	}
+
+	return result
+}
+
+// Scan will scanning for CRLF vulnerability against target
+//
+// It is kept as a thin backward-compatible wrapper around ScanJob for users
+// embedding crlfuzz as a library.
+func Scan(url string, method string, data string, headers []string, proxy string) (bool, error) {
+	result := ScanJob(&Job{URL: url}, method, data, headers, proxy)
+
+	return result.Status == StatusVulnerable, result.Err
 }
 
 func isVuln(r *http.Response) bool {
@@ -46,4 +96,13 @@ func isVuln(r *http.Response) bool {
 	}
 
 	return false
+}
+
+func isTimeoutError(e error) bool {
+	var netErr net.Error
+	if errors.As(e, &netErr) && netErr.Timeout() {
+		return true
+	}
+
+	return errors.Is(e, context.DeadlineExceeded)
 }

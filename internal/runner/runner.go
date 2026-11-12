@@ -2,7 +2,6 @@ package runner
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/dwisiswant0/crlfuzz/pkg/crlfuzz"
@@ -12,64 +11,98 @@ import (
 
 // New will fuzz target line by line
 func New(options *Options) {
-	jobs := make(chan string)
+	plan := crlfuzz.BuildPlan(options.Target)
+	if len(plan) == 0 {
+		errors.Exit("No valid target input provided.")
+	}
+
+	jobs := make(chan *crlfuzz.Job)
+	results := make(chan *crlfuzz.Result)
 	var wg sync.WaitGroup
 
-	for i := 0; i < options.Concurrency; i++ {
+	workers := options.Concurrency
+	if workers < 1 {
+		workers = 1
+	}
+
+	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
-			for target := range jobs {
-				options.run(target)
-			}
 			defer wg.Done()
+			for target := range jobs {
+				results <- options.run(target)
+			}
 		}()
 	}
 
-	for _, line := range strings.Split(options.Target, "\n") {
-		if isURL(line) {
-			for _, url := range crlfuzz.GenerateURL(line) {
-				jobs <- url
-			}
+	go func() {
+		for _, job := range plan {
+			jobs <- job
 		}
-	}
+		close(jobs)
+		wg.Wait()
+		close(results)
+	}()
 
-	close(jobs)
-	wg.Wait()
+	for result := range results {
+		options.print(result)
+	}
 }
 
-func (options *Options) run(url string) {
-	v, e := crlfuzz.Scan(
-		url,
+func (options *Options) run(job *crlfuzz.Job) *crlfuzz.Result {
+	return crlfuzz.ScanJob(
+		job,
 		options.Method,
 		options.Data,
 		options.Headers,
 		options.Proxy,
 	)
+}
 
-	url = strings.Trim(fmt.Sprintf("%q", url), "\"")
-
-	if e != nil {
-		if !options.Silent {
-			if options.Verbose {
-				errors.Show(e.Error())
-			} else {
-				errors.Show(url)
-			}
-		}
-	}
-
-	if v {
+func (options *Options) print(result *crlfuzz.Result) {
+	if result.Status == crlfuzz.StatusVulnerable {
 		if options.Silent {
-			fmt.Println(url)
+			fmt.Println(crlfuzz.SingleLine(result.URL))
 		} else {
-			fmt.Printf("[%s] %s\n", aurora.Green("VLN").String(), aurora.Green(url).String())
+			fmt.Printf("[%s] %s %s\n",
+				aurora.Green(result.Status.Label()),
+				aurora.Bold(result.ID),
+				aurora.Green(crlfuzz.SingleLine(result.URL)))
 		}
 
 		if options.Output != nil {
-			_, f := options.Output.WriteString(fmt.Sprintf("%s\n", url))
-			if f != nil {
-				errors.Show(f.Error())
+			if _, e := options.Output.WriteString(fmt.Sprintf("%s\n", crlfuzz.SingleLine(result.URL))); e != nil {
+				errors.Show(e.Error())
 			}
 		}
+
+		return
+	}
+
+	if options.Silent {
+		return
+	}
+
+	line := fmt.Sprintf("[%s] %s %s", coloredStatus(result.Status), aurora.Bold(result.ID), crlfuzz.SingleLine(result.URL))
+	if result.Status == crlfuzz.StatusDuplicate {
+		line += fmt.Sprintf(" (duplicate of %s)", aurora.Bold(result.DuplicateOf))
+	}
+	if options.Verbose && result.Err != nil {
+		line += fmt.Sprintf(": %s", result.Err.Error())
+	}
+
+	fmt.Println(line)
+}
+
+func coloredStatus(status crlfuzz.Status) aurora.Value {
+	switch status {
+	case crlfuzz.StatusTimeout:
+		return aurora.Yellow(status.Label())
+	case crlfuzz.StatusError:
+		return aurora.Red(status.Label())
+	case crlfuzz.StatusDuplicate:
+		return aurora.Magenta(status.Label())
+	default:
+		return aurora.Blue(status.Label())
 	}
 }

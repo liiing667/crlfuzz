@@ -9,13 +9,13 @@ import (
 )
 
 // Client define http.Client
-func Client(p string) *http.Client {
+func Client(p string, timeout time.Duration) *http.Client {
 	tr := &http.Transport{
 		MaxIdleConns:    30,
 		IdleConnTimeout: time.Second,
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // lgtm [go/disabled-certificate-check]
 		DialContext: (&net.Dialer{
-			Timeout:   time.Second * 30,
+			Timeout:   timeout,
 			KeepAlive: time.Second,
 		}).DialContext,
 	}
@@ -33,6 +33,6 @@ func Client(p string) *http.Client {
 	return &http.Client{
 		Transport:     tr,
 		CheckRedirect: re,
-		Timeout:       time.Second * 30,
+		Timeout:       timeout,
 	}
 }

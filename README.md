@@ -181,6 +181,37 @@ If you activate this silent mode with the `-s` flag, you will only see vulnerabl
 ▶ crlfuzz -l /path/to/urls.txt -s | tee vuln-urls.txt
 ```
 
+### Output & Status
+
+Every input target receives a stable, zero-padded identifier (`T0001`,
+`T0002`, ...) during scan planning. The same identifier is attached to every
+per-request result and to the CLI output, so concurrent results can always be
+traced back to the original target.
+
+Each fuzz request is classified into one of five explicit statuses, which
+means request failures and timeouts are no longer silently confused with
+clean (non-vulnerable) responses:
+
+| Status    | Meaning                                                            |
+|-----------|-------------------------------------------------------------------|
+| `VLN`     | Request completed and CRLF injection was confirmed                 |
+| `OK`      | Request completed and no injection was found                       |
+| `TIMEOUT` | Request did not complete within the client timeout                 |
+| `ERROR`   | Request failed for any other reason (shown in detail with `-v`)    |
+| `DUP`     | Candidate URL was already planned for an earlier target            |
+
+```bash
+▶ crlfuzz -l /path/to/urls.txt
+[VLN]     T0001 http://target/%0d%0aX-Injected-Header-By%3a%20CRLFuzz
+[OK]      T0002 http://example/
+[TIMEOUT] T0003 http://slow/
+[ERROR]   T0004 http://unreachable/
+[DUP]     T0005 http://target/%00X-Injected-Header-By%3a%20CRLFuzz (duplicate of T0001)
+```
+
+Silent mode (`-s`) and the `-o` output file keep their original behavior and
+contain bare vulnerable URLs only.
+
 ### Verbose
 
 Unlike silent mode, it will display error details if there is an error with the `-v` flag.
@@ -226,6 +257,18 @@ func main() {
 			fmt.Printf("VULN! %s\n", url)
 		}
 	}
+}
+```
+
+For structured batch scanning, `BuildPlan` assigns the stable target
+identifiers and de-duplicates candidate URLs, while `ScanJob` returns a
+`Result` exposing both the identifier and an explicit `Status`:
+
+```go
+for _, job := range crlfuzz.BuildPlan(targets) {
+	result := crlfuzz.ScanJob(job, "GET", "", []string{}, "")
+
+	fmt.Printf("%s %s %s\n", result.ID, result.Status, result.URL)
 }
 ```
 

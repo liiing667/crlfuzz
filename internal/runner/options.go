@@ -29,46 +29,45 @@ type Options struct {
 	Output                                         *os.File
 }
 
-var o *Options
+func newFlagSet() (*flag.FlagSet, *Options) {
+	o := &Options{}
+	fs := flag.NewFlagSet("crlfuzz", flag.ContinueOnError)
 
-func init() {
-	o = &Options{}
+	fs.StringVar(&o.URL, "u", "", "")
+	fs.StringVar(&o.URL, "url", "", "")
 
-	flag.StringVar(&o.URL, "u", "", "")
-	flag.StringVar(&o.URL, "url", "", "")
+	fs.StringVar(&o.List, "l", "", "")
+	fs.StringVar(&o.List, "list", "", "")
 
-	flag.StringVar(&o.List, "l", "", "")
-	flag.StringVar(&o.List, "list", "", "")
+	fs.StringVar(&o.Method, "X", "GET", "")
+	fs.StringVar(&o.Method, "method", "GET", "")
 
-	flag.StringVar(&o.Method, "X", "GET", "")
-	flag.StringVar(&o.Method, "method", "GET", "")
+	fs.StringVar(&o.Saveto, "o", "", "")
+	fs.StringVar(&o.Saveto, "output", "", "")
 
-	flag.StringVar(&o.Saveto, "o", "", "")
-	flag.StringVar(&o.Saveto, "output", "", "")
+	fs.StringVar(&o.Data, "d", "", "")
+	fs.StringVar(&o.Data, "data", "", "")
 
-	flag.StringVar(&o.Method, "d", "", "")
-	flag.StringVar(&o.Method, "data", "", "")
+	fs.Var(&o.Headers, "header", "")
+	fs.Var(&o.Headers, "H", "")
 
-	flag.Var(&o.Headers, "header", "")
-	flag.Var(&o.Headers, "H", "")
+	fs.StringVar(&o.Proxy, "x", "", "")
+	fs.StringVar(&o.Proxy, "proxy", "", "")
 
-	flag.StringVar(&o.Proxy, "x", "", "")
-	flag.StringVar(&o.Proxy, "proxy", "", "")
+	fs.IntVar(&o.Concurrency, "c", 25, "")
+	fs.IntVar(&o.Concurrency, "concurrent", 25, "")
 
-	flag.IntVar(&o.Concurrency, "c", 25, "")
-	flag.IntVar(&o.Concurrency, "concurrent", 25, "")
+	fs.BoolVar(&o.Silent, "s", false, "")
+	fs.BoolVar(&o.Silent, "silent", false, "")
 
-	flag.BoolVar(&o.Silent, "s", false, "")
-	flag.BoolVar(&o.Silent, "silent", false, "")
+	fs.BoolVar(&o.Verbose, "v", false, "")
+	fs.BoolVar(&o.Verbose, "verbose", false, "")
 
-	flag.BoolVar(&o.Verbose, "v", false, "")
-	flag.BoolVar(&o.Verbose, "verbose", false, "")
-
-	flag.BoolVar(&o.Version, "V", false, "")
-	flag.BoolVar(&o.Version, "version", false, "")
+	fs.BoolVar(&o.Version, "V", false, "")
+	fs.BoolVar(&o.Version, "version", false, "")
 
 	// Override help text
-	flag.Usage = func() {
+	fs.Usage = func() {
 		showBanner()
 		h := []string{
 			"",
@@ -81,11 +80,19 @@ func init() {
 		fmt.Fprint(os.Stderr, strings.Join(h, "\n"))
 	}
 
-	flag.Parse()
+	return fs, o
 }
 
 // ParseOptions will parse given args
 func ParseOptions() *Options {
+	fs, o := newFlagSet()
+	if e := fs.Parse(os.Args[1:]); e != nil {
+		if e == flag.ErrHelp {
+			os.Exit(0)
+		}
+		os.Exit(1)
+	}
+
 	// Show current version & exit
 	if o.Version {
 		showVersion()
